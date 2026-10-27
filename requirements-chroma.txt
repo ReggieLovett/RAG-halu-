@@ -1,0 +1,2 @@
+# Isolated local Chroma server; Node client communicates over the v2 HTTP API.
+chromadb>=1.0,<2.0

@@ -1,0 +1,18 @@
+{
+  "items": [
+    {
+      "id": "manual-example",
+      "question": "Where is Paris?",
+      "answer": "Paris is in France. Paris is in Germany. Paris has 100 airports.",
+      "context": [
+        { "id": "p1", "text": "Paris is located in France. Paris is not located in Germany.", "source": "Manual example passage" }
+      ]
+    },
+    {
+      "id": "rag-example",
+      "question": "What sits atop the Main Building at Notre Dame?",
+      "topK": 5
+    }
+  ],
+  "concurrency": 1
+}

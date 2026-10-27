@@ -3,20 +3,36 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "ingest:hf": "node --import tsx scripts/ingest-hf.ts",
+    "chroma:start": "node scripts/start-chroma.mjs",
+    "chroma:install": "node scripts/install-chroma.mjs",
+    "check:batch": "node --import tsx scripts/check-batch.ts"
   },
   "dependencies": {
-    "next": "14.2.33",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "@huggingface/transformers": "^3.8.1",
+    "@next/env": "^16.4.3",
+    "chromadb": "^3.5.0",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.16.5",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.6.2"
+  },
+  "overrides": {
+    "@huggingface/transformers": {
+      "sharp": "^0.35.5"
+    }
   }
 }
