@@ -218,10 +218,10 @@ export function finalizeClaim(
   if (strictnessMode && verdict === "Supported") {
     const before = adjustments.length;
     if (raw.literalMatch !== true) {
-      adjustments.push("Supported → Unsupported: Healthcare Mode requires the context to state the claim literally, and the verifier found the support needs conversion, approximation, or inference.");
+      adjustments.push("Supported → Unsupported: not stated literally in the context (Healthcare Mode).");
     }
     if (confidence < STRICT_SUPPORT_THRESHOLD) {
-      adjustments.push(`Supported → Unsupported: Healthcare Mode requires confidence ≥ ${STRICT_SUPPORT_THRESHOLD} (got ${confidence.toFixed(2)}).`);
+      adjustments.push(`Supported → Unsupported: confidence ${confidence.toFixed(2)} is below Healthcare Mode's ${STRICT_SUPPORT_THRESHOLD}.`);
     }
     if (adjustments.length > before) verdict = "Unsupported";
   }

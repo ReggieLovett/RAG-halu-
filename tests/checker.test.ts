@@ -91,7 +91,7 @@ describe("checkAnswer", () => {
     const ohio = result.claims[1];
     assert.equal(ohio.modelVerdict, "Supported");
     assert.equal(ohio.verdict, "Unsupported");
-    assert.match(ohio.adjustments[0], /Healthcare Mode requires confidence ≥ 0.95 \(got 0.90\)/);
+    assert.match(ohio.adjustments[0], /confidence 0\.90 is below Healthcare Mode's 0\.95/);
     assert.equal(result.claims[0].verdict, "Supported"); // literal and 0.99: passes both criteria
     assert.equal(result.metrics.faithfulness, 25);
     assert.equal(result.supportThreshold, 0.95);
@@ -118,7 +118,7 @@ describe("checkAnswer", () => {
     assert.deepEqual(strict.claims.map((claim) => claim.verdict), ["Unsupported", "Unsupported"]);
     assert.deepEqual(strict.claims.map((claim) => claim.modelVerdict), ["Supported", "Supported"]);
     assert.equal(strict.claims[0].adjustments.length, 1, "0.99 confidence does not rescue a non-literal match");
-    assert.match(strict.claims[0].adjustments[0], /state the claim literally/);
+    assert.match(strict.claims[0].adjustments[0], /not stated literally in the context/);
     assert.equal(strict.claims[1].adjustments.length, 2, "both strict criteria are reported");
     assert.equal(strict.metrics.faithfulness, 0);
 

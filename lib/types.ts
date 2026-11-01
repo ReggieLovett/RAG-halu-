@@ -34,8 +34,18 @@ export type RetrievedChunk = {
   distance: number | null;
 };
 
+/** Text pulled from a PDF/DOCX without storing it (used to fill the checker's context). */
+export type ExtractedDocument = {
+  fileName: string;
+  fileType: "pdf" | "docx";
+  pages: number | null;
+  characters: number;
+  text: string;
+};
+
 export type ChatRequest = {
-  documentId: string;
+  /** Omit for plain chat without a document. */
+  documentId?: string | null;
   messages: ChatMessage[];
   topK?: number;
 };
@@ -43,8 +53,9 @@ export type ChatRequest = {
 export type ChatResponse = {
   question: string;
   answer: string;
-  documentId: string;
-  fileName: string;
+  /** Null for plain chat, where `context` is empty. */
+  documentId: string | null;
+  fileName: string | null;
   /** The excerpts the answer was generated from, in retrieval order. */
   context: RetrievedChunk[];
   /** `context` joined into the single string the checker expects. */

@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { errorMessage, postJson } from "../../lib/api-client";
-import type { CheckRequest, CheckResult } from "../../lib/types";
-import { CheckResultView, VerdictLegend } from "./CheckResultView";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { apiRequest, errorMessage, postJson } from "../../lib/api-client";
+import { LIMITS } from "../../lib/config";
+import type { CheckRequest, CheckResult, ExtractedDocument } from "../../lib/types";
+import { CheckResultView, plural, VerdictLegend } from "./CheckResultView";
 import type { CheckerDraft } from "./DocumentChatbot";
 import { useElapsedSeconds, useRequest } from "./hooks";
 
 const EMPTY: CheckerDraft = { question: "", context: "", answer: "" };
+const ACCEPTED_TYPES = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 // Designed to produce all three verdicts.
 const EXAMPLE: CheckerDraft = {
@@ -21,14 +23,18 @@ const EXAMPLE: CheckerDraft = {
     "The trial was funded by the National Institutes of Health.",
 };
 
-/** `draft` changes when "Send to Checker" is clicked in the chatbot. */
-export default function HallucinationChecker({ draft }: { draft: CheckerDraft | null }) {
+/** `draft` changes when "Send to checker" is clicked in the chat. */
+export default function HallucinationChecker({ hidden, draft }: { hidden: boolean; draft: CheckerDraft | null }) {
   const [form, setForm] = useState<CheckerDraft>(EMPTY);
   const [strictnessMode, setStrictnessMode] = useState(false);
   const [result, setResult] = useState<CheckResult | null>(null);
   const [error, setError] = useState("");
+  const [fileNote, setFileNote] = useState("");
+  const [fileError, setFileError] = useState("");
   const request = useRequest();
+  const extract = useRequest();
   const seconds = useElapsedSeconds(request.busy);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const { cancel } = request;
   useEffect(() => {
@@ -37,10 +43,41 @@ export default function HallucinationChecker({ draft }: { draft: CheckerDraft | 
     setForm(draft);
     setResult(null);
     setError("");
+    setFileNote("");
   }, [draft, cancel]);
 
   function update(field: keyof CheckerDraft, value: string) {
     setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function reset(next: CheckerDraft) {
+    setForm(next);
+    setResult(null);
+    setError("");
+    setFileNote("");
+    setFileError("");
+  }
+
+  async function loadContextFile(file: File | undefined) {
+    if (!file) return;
+    setFileError("");
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const extracted = await extract.run((signal) =>
+        apiRequest<ExtractedDocument>("/api/extract", { method: "POST", body, signal }));
+      update("context", extracted.text);
+      setFileNote(
+        `Context loaded from ${extracted.fileName} (${plural(extracted.characters, "character")}).` +
+        (extracted.characters > LIMITS.contextCharacters
+          ? ` That's over the ${LIMITS.contextCharacters.toLocaleString()}-character limit, so trim it to the relevant part.`
+          : ""),
+      );
+    } catch (failure) {
+      setFileError(errorMessage(failure));
+    } finally {
+      if (fileInput.current) fileInput.current.value = "";
+    }
   }
 
   async function handleCheck(event: FormEvent) {
@@ -55,16 +92,31 @@ export default function HallucinationChecker({ draft }: { draft: CheckerDraft | 
     }
   }
 
+  const busy = request.busy || extract.busy;
+
   return (
-    <section id="checker" aria-labelledby="checker-heading">
-      <h2 id="checker-heading">B. Hallucination Checker</h2>
-      <p>
-        Paste a question, the source context, and an AI answer, or click &quot;Send to Checker&quot; in section A.
-        Groq extracts atomic claims, verifies each against the context, and scores relevance.
-      </p>
+    <section data-mode="checker" hidden={hidden} aria-labelledby="checker-heading">
+      <header>
+        <h1 id="checker-heading">Hallucination checker</h1>
+        <p>
+          Check an answer against its source. Groq splits the answer into claims, verifies each against the context,
+          and scores relevance. Answers sent from the chat land here.
+        </p>
+      </header>
+
+      <div data-role="toolbar">
+        <input ref={fileInput} type="file" accept={ACCEPTED_TYPES} hidden onChange={(event) => void loadContextFile(event.target.files?.[0])} />
+        <button type="button" disabled={busy} onClick={() => fileInput.current?.click()}>
+          {extract.busy ? "Reading file…" : "Upload file for context"}
+        </button>
+        <button type="button" disabled={busy} onClick={() => reset(EXAMPLE)}>Load example</button>
+        <button type="button" disabled={busy} onClick={() => reset(EMPTY)}>Clear</button>
+      </div>
+      {fileNote ? <p data-role="note">{fileNote}</p> : null}
+      {fileError ? <p role="alert">Couldn&apos;t read the file: {fileError}</p> : null}
 
       <form onSubmit={handleCheck}>
-        <fieldset disabled={request.busy}>
+        <fieldset disabled={busy}>
           <legend>Inputs</legend>
           <p>
             <label htmlFor="check-question">Question</label>
@@ -76,7 +128,7 @@ export default function HallucinationChecker({ draft }: { draft: CheckerDraft | 
             <br />
             <textarea id="check-context" rows={10} required value={form.context} onChange={(event) => update("context", event.target.value)} />
             <br />
-            <small>{form.context.length.toLocaleString()} / 60,000 characters</small>
+            <small>{form.context.length.toLocaleString()} / {LIMITS.contextCharacters.toLocaleString()} characters</small>
           </p>
           <p>
             <label htmlFor="check-answer">Answer to check</label>
@@ -91,14 +143,8 @@ export default function HallucinationChecker({ draft }: { draft: CheckerDraft | 
           </p>
         </fieldset>
         <p>
-          <button type="submit" disabled={request.busy}>Run check</button>{" "}
-          <button type="button" onClick={request.cancel} disabled={!request.busy}>Cancel</button>{" "}
-          <button type="button" disabled={request.busy} onClick={() => { setForm(EXAMPLE); setResult(null); setError(""); }}>
-            Load example
-          </button>{" "}
-          <button type="button" disabled={request.busy} onClick={() => { setForm(EMPTY); setResult(null); setError(""); }}>
-            Clear
-          </button>
+          <button type="submit" disabled={busy}>Run check</button>{" "}
+          <button type="button" onClick={request.cancel} disabled={!request.busy}>Cancel</button>
         </p>
       </form>
 

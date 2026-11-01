@@ -100,7 +100,7 @@ export async function extractDocumentText(fileName: string, bytes: Uint8Array): 
   return { ...parsed, text };
 }
 
-function safeFileName(name: string): string {
+export function safeFileName(name: string): string {
   const base = name.split(/[\\/]/).pop()?.trim() || "document";
   return base.replace(/[\u0000-\u001f]/g, "").slice(0, 200);
 }

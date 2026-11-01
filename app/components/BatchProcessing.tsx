@@ -1,66 +1,41 @@
 "use client";
 
-import { useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import { errorMessage, postJson } from "../../lib/api-client";
 import { parseBatchJson } from "../../lib/batch-file";
 import { LIMITS } from "../../lib/config";
 import { auditReportFileName, batchReportToCsv, downloadCsv } from "../../lib/export";
-import type { BatchCheckRequest, BatchItem, BatchReport, HfImportRequest, HfImportResponse } from "../../lib/types";
+import type { BatchCheckRequest, BatchItem, BatchReport } from "../../lib/types";
 import { CheckResultView, formatScore, plural, VerdictLabel, VerdictLegend } from "./CheckResultView";
 import { useElapsedSeconds, useRequest } from "./hooks";
 
-type LoadedItems = { items: BatchItem[]; source: string };
-
-function text(form: FormData, name: string): string | undefined {
-  const value = form.get(name);
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
+export type LoadedItems = { items: BatchItem[]; source: string };
 
 function contextPreview(context: string | string[]): string {
   const joined = Array.isArray(context) ? context.join(" ") : context;
   return joined.length > 160 ? `${joined.slice(0, 160)}…` : joined;
 }
 
-export default function BatchProcessing() {
-  const [loaded, setLoaded] = useState<LoadedItems | null>(null);
-  const [importResult, setImportResult] = useState<HfImportResponse | null>(null);
-  const [importError, setImportError] = useState("");
+/** Items arrive from Hugging Face import (via the page) or a local JSON file. */
+export default function BatchProcessing({
+  hidden,
+  loaded,
+  onLoad,
+}: {
+  hidden: boolean;
+  loaded: LoadedItems | null;
+  onLoad: (loaded: LoadedItems) => void;
+}) {
   const [fileError, setFileError] = useState("");
   const [strictnessMode, setStrictnessMode] = useState(false);
   const [concurrency, setConcurrency] = useState<number>(LIMITS.batchConcurrency.default);
   const [report, setReport] = useState<BatchReport | null>(null);
   const [runError, setRunError] = useState("");
-  const importRequest = useRequest();
   const batchRequest = useRequest();
-  const importSeconds = useElapsedSeconds(importRequest.busy);
   const batchSeconds = useElapsedSeconds(batchRequest.busy);
 
-  async function handleImport(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const body: HfImportRequest = {
-      dataset: text(form, "dataset") ?? "",
-      config: text(form, "config"),
-      split: text(form, "split"),
-      offset: Number(text(form, "offset") ?? 0),
-      limit: Number(text(form, "limit") ?? LIMITS.hfRows.default),
-      questionField: text(form, "questionField"),
-      answerField: text(form, "answerField"),
-      contextField: text(form, "contextField"),
-      embed: form.get("embed") === "on",
-    };
-    setImportError("");
-    try {
-      const result = await importRequest.run((signal) => postJson<HfImportResponse>("/api/import-hf", body, signal));
-      setImportResult(result);
-      if (result.items.length > 0) {
-        setLoaded({ items: result.items, source: `Hugging Face ${result.dataset} (${result.config}/${result.split}, rows ${result.offset}–${result.offset + result.rowsFetched - 1})` });
-        setReport(null);
-      }
-    } catch (error) {
-      setImportError(errorMessage(error));
-    }
-  }
+  // A new set of items makes the previous report stale.
+  useEffect(() => setReport(null), [loaded]);
 
   async function handleFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -68,8 +43,7 @@ export default function BatchProcessing() {
     if (!file) return;
     try {
       const items = parseBatchJson(await file.text(), LIMITS.batchItems);
-      setLoaded({ items, source: `local file ${file.name}` });
-      setReport(null);
+      onLoad({ items, source: `local file ${file.name}` });
     } catch (error) {
       setFileError(errorMessage(error));
     }
@@ -90,81 +64,14 @@ export default function BatchProcessing() {
   const summary = report?.summary;
 
   return (
-    <section id="batch" aria-labelledby="batch-heading">
-      <h2 id="batch-heading">C. Batch Processing &amp; Hugging Face</h2>
-      <p>
-        Load up to {LIMITS.batchItems} question/answer/context items from Hugging Face or a local JSON file,
-        check them all, and download the CSV audit report.
-      </p>
-
-      <form onSubmit={handleImport}>
-        <fieldset disabled={importRequest.busy}>
-          <legend>Import a test dataset from Hugging Face</legend>
-          <p>
-            <label htmlFor="hf-dataset">Dataset ID</label>
-            <br />
-            <input id="hf-dataset" name="dataset" type="text" required placeholder="rajpurkar/squad" />
-          </p>
-          <p>
-            <label>
-              Rows <input name="limit" type="number" min={1} max={LIMITS.hfRows.max} defaultValue={LIMITS.hfRows.default} />
-            </label>{" "}
-            <label>
-              Starting row <input name="offset" type="number" min={0} defaultValue={0} />
-            </label>
-          </p>
-          <details>
-            <summary>Config, split, and column mapping (auto-detected when blank)</summary>
-            <p>
-              <label>Config <input name="config" type="text" placeholder="plain_text" /></label>{" "}
-              <label>Split <input name="split" type="text" placeholder="validation" /></label>
-            </p>
-            <p>
-              <label>Question column <input name="questionField" type="text" placeholder="question" /></label>{" "}
-              <label>Answer column <input name="answerField" type="text" placeholder="answers.text.0" /></label>{" "}
-              <label>Context column <input name="contextField" type="text" placeholder="context" /></label>
-            </p>
-            <p>
-              <label>
-                <input name="embed" type="checkbox" defaultChecked /> Embed contexts into ChromaDB (Chroma default embeddings)
-              </label>
-            </p>
-          </details>
-          <p>
-            <button type="submit">Import from Hugging Face</button>{" "}
-            <button type="button" onClick={importRequest.cancel} disabled={!importRequest.busy}>Cancel</button>
-          </p>
-        </fieldset>
-      </form>
-      {importRequest.busy ? <p role="status">Fetching rows and embedding contexts… {importSeconds} s</p> : null}
-      {importError ? <p role="alert">Import failed: {importError}</p> : null}
-      {importResult ? (
-        <div data-role="import-result">
-          <p>
-            Imported {importResult.items.length} of {importResult.rowsFetched} rows from <code>{importResult.dataset}</code> ({importResult.config}/{importResult.split}
-            {importResult.totalRows !== null ? `, ${importResult.totalRows.toLocaleString()} rows in split` : ""}). Columns: question = <code>{importResult.fields.question}</code>,
-            answer = <code>{importResult.fields.answer}</code>, context = <code>{importResult.fields.context}</code>.
-          </p>
-          <p>
-            ChromaDB:{" "}
-            {importResult.embedding.status === "ok"
-              ? `${plural(importResult.embedding.uniqueContexts, "unique context")} → ${plural(importResult.embedding.chunksUpserted, "chunk")} in "${importResult.embedding.collection}".`
-              : importResult.embedding.status === "skipped"
-                ? "embedding skipped."
-                : `embedding failed (${importResult.embedding.code}): ${importResult.embedding.message} The items can still be batch checked.`}
-          </p>
-          {importResult.skipped.length > 0 ? (
-            <details>
-              <summary>{plural(importResult.skipped.length, "row")} skipped</summary>
-              <ul>
-                {importResult.skipped.map((row) => (
-                  <li key={row.rowIndex}>Row {row.rowIndex}: {row.reason}</li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
-        </div>
-      ) : null}
+    <section data-mode="batch" hidden={hidden} aria-labelledby="batch-heading">
+      <header>
+        <h1 id="batch-heading">Batch check</h1>
+        <p>
+          Check up to {LIMITS.batchItems} question/answer/context items at once and download the CSV audit report.
+          Load items from a JSON file here, or from Hugging Face import.
+        </p>
+      </header>
 
       <fieldset disabled={batchRequest.busy}>
         <legend>Local batch file</legend>
@@ -198,7 +105,7 @@ export default function BatchProcessing() {
           </ol>
         </details>
       ) : (
-        <p>No items loaded.</p>
+        <p>No items loaded. Choose a JSON file above, or import rows in Hugging Face import.</p>
       )}
 
       <fieldset disabled={batchRequest.busy}>

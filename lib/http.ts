@@ -36,6 +36,27 @@ export async function readJson(request: Request, maxBytes: number): Promise<unkn
   }
 }
 
+/** Read the "file" field of a multipart upload, rejecting oversized bodies before buffering. */
+export async function readFormFile(request: Request, maxBytes: number): Promise<{ name: string; bytes: Uint8Array }> {
+  if (!request.headers.get("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    throw new AppError(415, "UNSUPPORTED_MEDIA_TYPE", 'Send the document as multipart/form-data in a field named "file".');
+  }
+  if (Number(request.headers.get("content-length") ?? 0) > maxBytes + 64 * 1024) {
+    throw new AppError(413, "FILE_TOO_LARGE", `Files must be ${maxBytes / 1024 / 1024} MB or smaller.`);
+  }
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    throw new AppError(400, "INVALID_FORM_DATA", "The upload could not be read as multipart form data.");
+  }
+  const file = form.get("file");
+  if (!(file instanceof File)) {
+    throw new AppError(400, "FILE_REQUIRED", 'Attach a PDF or DOCX file in the "file" field.');
+  }
+  return { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) };
+}
+
 export function zodDetails(error: z.ZodError): NonNullable<ApiErrorBody["details"]> {
   return error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
 }

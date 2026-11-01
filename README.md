@@ -3,10 +3,10 @@
 A local Next.js (App Router) platform with three connected modules:
 
 1. **Document Q&A chatbot (the generator).** Upload a PDF or DOCX; it is chunked and embedded into a local ChromaDB collection, and Groq answers questions strictly from the retrieved excerpts. This is the "RAG system under test."
-2. **Verification engine (the checker).** Splits an answer into atomic claims, verifies each against the context (verdict, exact evidence quote, confidence), and scores faithfulness, answer relevance, and context relevance. Healthcare Strictness Mode requires confidence ≥ 0.95 for "Supported."
+2. **Verification engine (the checker).** Splits an answer into atomic claims, verifies each against the context (verdict, exact evidence quote, confidence), and scores faithfulness, answer relevance, and context relevance. Healthcare Strictness Mode accepts "Supported" only when the context states the claim literally and confidence is ≥ 0.95.
 3. **Hugging Face importer and batch audits.** Pulls Q/A/context rows from a Hugging Face dataset, embeds the contexts into ChromaDB, runs them (or a local JSON file) through the checker in parallel, and exports a CSV audit report.
 
-The frontend is deliberately raw, unstyled HTML. There is no CSS, no classes, and no inline styles, because UI design is handled separately. Verdicts are color-coded with content markers (🟢 Supported, 🔴 Contradicted, 🟡 Unsupported), and elements carry `data-verdict`, `data-status`, and `data-role` attributes as styling hooks.
+The frontend is semantic HTML with one light, Claude-inspired stylesheet, [app/globals.css](app/globals.css): a warm cream page, white rounded panels, serif headings and answers, and a clay accent. The stylesheet targets only elements and the `data-verdict`, `data-status`, and `data-role` hooks, with no classes and no inline styles, so whoever owns the UI design can replace it wholesale. Without it, verdicts still read through content markers (🟢 Supported, 🔴 Contradicted, 🟡 Unsupported).
 
 ## Run it
 
@@ -34,9 +34,12 @@ The first upload downloads Chroma's default embedding model (`Xenova/all-MiniLM-
 
 ## Using the dashboard
 
-- **A. Document Chatbot**: upload a PDF/DOCX, then ask questions. Each answer shows the excerpts it was generated from and a **Send to Checker** button.
-- **B. Hallucination Checker**: fills in automatically from "Send to Checker", or accepts pasted input. **Load example** fills in a case that produces all three verdicts. Tick **Healthcare Strictness Mode** for the 0.95 threshold. Results show the three scores and a claims table with verdict, confidence, evidence, reasoning, and any verdict adjustment.
-- **C. Batch Processing & Hugging Face**: import rows from a dataset ID (config, split, and columns are auto-detected; override them under the expandable options), or load a local JSON file (`examples/batch-input.json`). Then **Run batch check** and **Download CSV Audit Report**.
+The sidebar switches between four modes, one on screen at a time. Each mode keeps its state when you switch away. On a phone, the modes become a row of tabs.
+
+- **Chat**: ask anything, with no file needed (plain Groq chat). To answer from a research document instead, attach a PDF/DOCX with the **+** button in the message box or drag it onto the chat. Answers then come only from that document, show the retrieved excerpts, and can be sent with **Send to checker**. **Remove** goes back to plain chat.
+- **Hallucination checker**: fills in automatically from "Send to checker", or accepts pasted input. The buttons at the top are **Upload file for context** (fills the Context box from a PDF/DOCX), **Load example** (a case that produces all three verdicts), and **Clear**. Tick **Healthcare Strictness Mode** for the literal-match and 0.95 rules. Results show the three scores and a claims table with verdict, confidence, evidence, reasoning, and any verdict adjustment. In Healthcare Mode the table also gets a "Literal match" column.
+- **Hugging Face import**: import rows from a dataset ID. Config, split, and columns are auto-detected; you can override them under the expandable options. Then **Check these in Batch check**.
+- **Batch check**: load a local JSON file (`examples/batch-input.json`) or the imported rows, then **Run batch check** and **Download CSV Audit Report**.
 
 ## Architecture
 
@@ -45,13 +48,13 @@ The first upload downloads Chroma's default embedding model (`Xenova/all-MiniLM-
 | Groq client (groq-sdk): structured JSON, retries, error mapping | `lib/groq.ts` |
 | PDF (pdf-parse) / DOCX (mammoth) parsing, ingestion, retrieval | `lib/documents.ts`, `lib/chunking.ts` |
 | ChromaDB with Chroma's default embedding function | `lib/chroma.ts` |
-| Document chatbot | `lib/chatbot.ts`, `app/api/chat/route.ts`, `app/api/upload/route.ts` |
+| Chatbot (plain or document-grounded) | `lib/chatbot.ts`, `app/api/chat/route.ts`, `app/api/upload/route.ts`, `app/api/extract/route.ts` |
 | Verification engine | `lib/checker.ts`, `lib/evidence.ts`, `app/api/check/route.ts` |
 | Hugging Face importer | `lib/huggingface-importer.ts`, `app/api/import-hf/route.ts` |
 | Batch processing | `lib/batch.ts`, `app/api/batch-check/route.ts` |
 | CSV audit export (client-safe) | `lib/export.ts` |
 | Shared types, config, HTTP helpers | `lib/types.ts`, `lib/config.ts`, `lib/http.ts`, `lib/errors.ts` |
-| Raw HTML dashboard | `app/page.tsx`, `app/components/*` |
+| Dashboard (semantic HTML + one stylesheet) | `app/page.tsx`, `app/components/*`, `app/globals.css` |
 
 **Retrieval.** Uploaded text is split into sentence-aware chunks (about 1,000 characters with about 150 characters of overlap). The chunks are embedded with Chroma's `DefaultEmbeddingFunction` from `@chroma-core/default-embed` (all-MiniLM-L6-v2, cosine space) and stored in the `uploaded_documents` collection, tagged with a `documentId`, which is a hash of the extracted text, so re-uploading the same file replaces its chunks. Chat retrieves the top 5 chunks for the latest question and filters them to the active document.
 
@@ -64,7 +67,9 @@ Evidence quotes are located in the context with an exact match first, then a whi
 
 **Faithfulness** is computed in code from the final verdicts as (Supported ÷ total claims) × 100, rather than by the LLM, because LLMs do arithmetic unreliably. It is `null` when the answer makes no factual claims.
 
-**Healthcare Strictness Mode** adds clinical-rigor instructions to the verification prompt and downgrades any Supported claim with confidence below 0.95. Note that confidence is the model's self-report. In testing, `openai/gpt-oss-120b` often reports 0.97 to 0.99 even for paraphrased or approximated support ("roughly three times daily" for "every 8 hours"), so the threshold mainly catches claims the model itself is unsure about.
+**Healthcare Strictness Mode** adds clinical-rigor instructions and asks the verifier for a `literalMatch` flag: true only if the evidence states the claim's facts literally (same numbers, units, frequency, population, and qualifiers). Rewording and standard abbreviations count as literal; conversion, rounding, approximation, or inference do not. The flag is placed before the confidence in the schema, so the model judges literalness first. A Supported claim stays Supported only if `literalMatch` is true **and** confidence is ≥ 0.95. Otherwise it becomes Unsupported, and each failed criterion is noted in `adjustments`.
+
+The flag exists because a confidence threshold alone barely gated anything: `openai/gpt-oss-120b` reported 0.97–0.99 for "roughly three times daily" against "every 8 hours". With the flag, those claims are marked `literalMatch: false` and downgraded, while literally stated claims ("412 adults at hospitals in Ohio") stay Supported. Standard mode neither asks for nor applies the flag, and `literalMatch` is `null` there.
 
 ## API
 
@@ -85,6 +90,10 @@ curl -F "file=@paper.pdf" http://127.0.0.1:3000/api/upload
 
 Handled failures: wrong extension or magic bytes (415/422), password-protected PDF (`PDF_PASSWORD_PROTECTED`), damaged files (`PDF_UNREADABLE`, `DOCX_UNREADABLE`), scanned PDFs with no text layer (`NO_EXTRACTABLE_TEXT`), and Chroma not running (`CHROMA_UNAVAILABLE`).
 
+### `POST /api/extract`
+
+Multipart form with field `file` (PDF or DOCX, up to 20 MB). Returns `{ fileName, fileType, pages, characters, text }` and stores nothing. The checker's **Upload file for context** button uses it.
+
 ### `POST /api/chat`
 
 ```json
@@ -93,7 +102,7 @@ Handled failures: wrong extension or magic bytes (415/422), password-protected P
   "topK": 5 }
 ```
 
-Returns `{ question, answer, documentId, fileName, context: [{ id, chunkIndex, text, distance }], contextText, model, durationMs }`. `contextText` is what "Send to Checker" passes on as the context. Up to 8 earlier turns are sent for continuity, but only the retrieved excerpts count as evidence. If the excerpts don't contain the answer, the reply is "The uploaded document does not contain information to answer this question."
+`documentId` is optional. Without it (or with `null`), this is plain chat: no retrieval, no Chroma, and `context` is empty with `documentId`/`fileName` null. Returns `{ question, answer, documentId, fileName, context: [{ id, chunkIndex, text, distance }], contextText, model, durationMs }`. `contextText` is what "Send to Checker" passes on as the context. Up to 8 earlier turns are sent for continuity, but only the retrieved excerpts count as evidence. If the excerpts don't contain the answer, the reply is "The uploaded document does not contain information to answer this question."
 
 ### `POST /api/check`
 
@@ -110,7 +119,7 @@ Returns `{ question, answer, documentId, fileName, context: [{ id, chunkIndex, t
 { "claims": [{ "id": "c1", "claim": "The intervention reduced hospital readmissions by 32%.",
                "verdict": "Contradicted", "modelVerdict": "Contradicted",
                "evidence": "Participants who received the intervention had 23% fewer hospital readmissions than the control group.",
-               "evidenceFound": true, "confidence": 0.99, "reasoning": "…", "adjustments": [] }],
+               "evidenceFound": true, "literalMatch": null, "confidence": 0.99, "reasoning": "…", "adjustments": [] }],
   "counts": { "total": 1, "supported": 0, "contradicted": 1, "unsupported": 0 },
   "metrics": { "faithfulness": 0, "answerRelevance": 80, "contextRelevance": 100,
                "answerRelevanceReason": "…", "contextRelevanceReason": "…" },
@@ -167,7 +176,7 @@ npm test
 npm run build
 ```
 
-There are 42 unit tests: checker logic and Healthcare Mode, evidence matching, CSV export, batch concurrency and summaries, the Hugging Face importer, real PDF/DOCX parsing, chunking, and the Groq client against a local mock server (timeouts, 429/5xx retries, error mapping). They use injected fakes or local servers and never call Groq or Hugging Face.
+There are 43 unit tests: checker logic and Healthcare Mode (including the literal-match gate), evidence matching, CSV export, batch concurrency and summaries, the Hugging Face importer, real PDF/DOCX parsing, chunking, and the Groq client against a local mock server (timeouts, 429/5xx retries, error mapping). They use injected fakes or local servers and never call Groq or Hugging Face.
 
 ## Notes
 
