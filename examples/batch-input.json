@@ -1,18 +1,27 @@
 {
   "items": [
     {
-      "id": "manual-example",
+      "id": "paris-mixed",
       "question": "Where is Paris?",
-      "answer": "Paris is in France. Paris is in Germany. Paris has 100 airports.",
+      "answer": "Paris is in France. Paris is also in Germany. Paris has 100 airports.",
+      "context": "Paris is the capital of France and is located in northern France. Paris is not located in Germany."
+    },
+    {
+      "id": "readmissions",
+      "question": "What did the study find about hospital readmissions?",
+      "answer": "The intervention reduced hospital readmissions by 32%, and the study enrolled 412 adults.",
       "context": [
-        { "id": "p1", "text": "Paris is located in France. Paris is not located in Germany.", "source": "Manual example passage" }
+        "The study enrolled 412 adults aged 18 to 65 across three hospitals in Ohio between 2019 and 2021.",
+        "Participants who received the intervention had 23% fewer hospital readmissions than the control group."
       ]
     },
     {
-      "id": "rag-example",
+      "id": "notre-dame",
       "question": "What sits atop the Main Building at Notre Dame?",
-      "topK": 5
+      "answer": "A golden statue of the Virgin Mary sits atop the Main Building's gold dome.",
+      "context": "Atop the Main Building's gold dome is a golden statue of the Virgin Mary. Immediately in front of the Main Building and facing it, is a copper statue of Christ with arms upraised."
     }
   ],
-  "concurrency": 1
+  "strictnessMode": false,
+  "concurrency": 2
 }

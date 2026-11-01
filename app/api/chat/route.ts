@@ -1,12 +1,14 @@
-import { apiError, chatRequestSchema, readJson } from "../../../lib/rag/http";
-import { runRag } from "../../../lib/rag/pipeline";
+import { answerFromDocument } from "../../../lib/chatbot";
+import { errorResponse, readJson } from "../../../lib/http";
 
-export const runtime = "nodejs";
+export const maxDuration = 120;
 
-export async function POST(request: Request) {
+/** { documentId, messages: [{ role, content }], topK? } → ChatResponse */
+export async function POST(request: Request): Promise<Response> {
   try {
-    const { messages, topK } = chatRequestSchema.parse(await readJson(request));
-    const question = messages[messages.length - 1].content;
-    return Response.json(await runRag(question, topK, request.signal));
-  } catch (error) { return apiError(error); }
+    const body = await readJson(request, 1024 * 1024);
+    return Response.json(await answerFromDocument(body, request.signal));
+  } catch (error) {
+    return errorResponse(error);
+  }
 }

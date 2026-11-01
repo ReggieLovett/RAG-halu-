@@ -1,252 +1,176 @@
-# Halu Chat: local RAG backend
+# AI Chatbot & RAG Hallucination Checker
 
-Next.js API routes retrieve passages from a **local ChromaDB server**, generate an answer with Groq `openai/gpt-oss-120b`, and verify individual factual claims against those same passages. The existing design is retained, with functional Chat, Manual check, and Batch checker views. Local CPU embeddings use `Xenova/all-MiniLM-L6-v2` through Transformers.js; Groq remains a remote API. Internet is needed for installation, dataset/model download, and Groq calls. Cached embeddings and Chroma storage are local.
+A local Next.js (App Router) platform with three connected modules:
 
-## Run in VS Code
+1. **Document Q&A chatbot (the generator).** Upload a PDF or DOCX; it is chunked and embedded into a local ChromaDB collection, and Groq answers questions strictly from the retrieved excerpts. This is the "RAG system under test."
+2. **Verification engine (the checker).** Splits an answer into atomic claims, verifies each against the context (verdict, exact evidence quote, confidence), and scores faithfulness, answer relevance, and context relevance. Healthcare Strictness Mode requires confidence ≥ 0.95 for "Supported."
+3. **Hugging Face importer and batch audits.** Pulls Q/A/context rows from a Hugging Face dataset, embeds the contexts into ChromaDB, runs them (or a local JSON file) through the checker in parallel, and exports a CSV audit report.
 
-If your terminal opens in the parent `ai prog` folder, the local parent `package.json` forwards `dev`, `chroma:start`, `chroma:install`, `ingest:hf`, `check:batch`, `typecheck`, and `test` to this project. These commands work from either folder; no Python environment activation is required for npm commands. Relative CLI file paths resolve inside `RAG-halu-`. The parent launcher is outside this application's Git repository, so a fresh clone should be opened directly in the project folder.
+The frontend is deliberately raw, unstyled HTML. There is no CSS, no classes, and no inline styles, because UI design is handled separately. Verdicts are color-coded with content markers (🟢 Supported, 🔴 Contradicted, 🟡 Unsupported), and elements carry `data-verdict`, `data-status`, and `data-role` attributes as styling hooks.
 
-Open this project directory in VS Code. Use Node.js 22 LTS or newer. Python 3.10–3.12 is needed only for the optional Python server installation. No Docker, cloud database, or deployment configuration is required.
+## Run it
 
-1. Install JavaScript dependencies:
-
-   ```bash
-   npm install
-   ```
-
-   Keep sufficient free disk space for native runtimes, the model cache, and the persisted database. The optional Python installation needs substantially more space than the standalone server.
-
-2. Create `.env.local` from `.env.example` and set `GROQ_API_KEY` to your Groq key. If `.env.local` already exists, keep it and add any missing settings from the example. Never commit your key. All environment variables are server-only.
-
-3. Install the official standalone Chroma server into this project:
-
-   ```bash
-   npm run chroma:install
-   ```
-
-   This installs Chroma's pinned standalone release in `.local/bin`, verifies its published SHA-256 digest, and requires no global installation or Python dependencies. Supported platforms are macOS Apple Silicon/Intel, Linux x64, and Windows x64. Existing Python installations in `.venv` are also supported by the launcher.
-
-4. In terminal 1, start Chroma:
-
-   ```bash
-   npm run chroma:start
-   ```
-
-   The launcher finds `.local/bin/chroma` (or `.venv/bin/chroma`) and runs it on `127.0.0.1:8000` with disk storage in `.chroma/`. It reads CHROMA_HOST/CHROMA_PORT from `.env.local`. Keep this terminal running. Data survives restarts. You can check connectivity with:
-
-   ```bash
-   curl http://127.0.0.1:8000/api/v2/heartbeat
-   ```
-
-5. In terminal 2, download and ingest the dataset:
-
-   ```bash
-   npm run ingest:hf
-   ```
-
-   The first run downloads and caches the embedding model in `.cache/transformers/`. This may take a few minutes. The default imports the first 1,000 SQuAD training **rows**, deduplicates repeated context, chunks passages with overlap, embeds them locally, and upserts them in batches. A thousand rows do not mean a thousand unique passages. No Groq key is needed for ingestion.
-
-6. In terminal 3, start Next.js:
-
-   ```bash
-   npm run dev
-   ```
-
-   Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Chat calls the RAG pipeline through `/api/chat`. Restart Next.js after changing `.env.local`.
-
-Optional Python alternative on macOS/Linux: `python3 -m venv .venv` then `.venv/bin/python -m pip install -r requirements-chroma.txt`. On Windows PowerShell: `py -3.12 -m venv .venv` then `.venv\Scripts\python.exe -m pip install -r requirements-chroma.txt`. In either case, `npm run chroma:start` finds that installation if no standalone binary exists.
-
-If `chroma:start` reports that Chroma is not installed, an earlier Python installation may have failed. Run `npm run chroma:install`, then retry `npm run chroma:start`. Activating `.venv` alone does not install Chroma.
-
-## Use the checker
-
-- **Chat**: ask a self-contained question about the indexed data. The answer shows verdict highlights, faithfulness, and a claim list. Expand a claim to see its exact quote, source, confidence, and reason. Expand the passages section to see all retrieved text.
-- **Manual check**: paste a question, source passages, and an existing generated answer. Plain text passages are separated by blank lines; JSON arrays preserve your own IDs and sources. Click **Load three-verdict example**, then **Check answer** for a quick demonstration. Chroma is not needed when passages are supplied manually.
-- **Batch checker**: upload a JSON/JSONL file, run the check, expand each result, and click **Download JSON report**. The built-in example file and `examples/batch-input.json` demonstrate the format.
-
-Green means Supported, red means Contradicted, and amber means Unsupported. The legend and claim labels also spell out every verdict. Highlights refer to exact original-answer text, using locally validated UTF-16 spans; unhighlighted wording has no mapped factual claim. Overlapping verdicts conservatively prioritize Contradicted, then Unsupported, then Supported. The answer is never inserted as HTML. Cancelling or changing views discards stale client results.
-
-See `PROJECT_REQUIREMENTS.md` for the mapping from the supplied project slides to these functions. Functional controls and minimal verdict styling were added; no visual redesign was performed.
-
-## API routes
-
-All routes use the Node.js runtime and require `Content-Type: application/json`. Validation errors return HTTP 400; oversized bodies return 413. Bodies are limited to 128 KiB, questions to 4,000 characters, and `topK` to 1–10 (default 5). Embedding token limits are checked separately.
-
-### POST `/api/rag`
+Requirements: Node.js 22+ and a Groq API key. The internet is needed for Groq, Hugging Face, and the first download of the embedding model.
 
 ```bash
-curl http://127.0.0.1:3000/api/rag \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"What sits atop the Main Building at Notre Dame?","topK":5}'
+npm install
+cp .env.example .env.local   # then set GROQ_API_KEY (keep an existing .env.local)
+npm run chroma:install       # one-time: project-local standalone Chroma server
 ```
 
-The response shape below is illustrative, not a recorded model result:
-
-```json
-{
-  "question": "What sits atop the Main Building at Notre Dame?",
-  "answer": "A golden statue of the Virgin Mary sits atop the dome. [passage-id]",
-  "message": "A golden statue of the Virgin Mary sits atop the dome. [passage-id]",
-  "status": "verified",
-  "context": [
-    {
-      "id": "passage-id",
-      "text": "Atop the Main Building's gold dome is a golden statue of the Virgin Mary.",
-      "source": "https://huggingface.co/datasets/rajpurkar/squad",
-      "distance": 0.12,
-      "metadata": {}
-    }
-  ],
-  "verification": {
-    "claims": [
-      {
-        "id": "claim-1",
-        "claim": "A golden statue of the Virgin Mary sits atop the Main Building's dome.",
-        "verdict": "Supported",
-        "evidence": [
-          {
-            "passageId": "passage-id",
-            "quote": "Atop the Main Building's gold dome is a golden statue of the Virgin Mary.",
-            "source": "https://huggingface.co/datasets/rajpurkar/squad"
-          }
-        ],
-        "confidence": 0.96,
-        "reason": "The passage explicitly states the statue's location."
-      }
-    ],
-    "faithfulnessScore": 100,
-    "supportedClaims": 1,
-    "contradictedClaims": 0,
-    "unsupportedClaims": 0,
-    "totalClaims": 1
-  }
-}
-```
-
-`message` aliases `answer` for the unchanged UI. `status: "verified"` means the verification pipeline completed; inspect the score/verdicts to determine support. It does not mean every claim passed. `distance` is cosine distance, not a probability or confidence. An empty context produces a local abstention with `status: "no_context"`, zero claims, and a null score.
-
-### POST `/api/chat`
+Terminal 1 (leave running):
 
 ```bash
-curl http://127.0.0.1:3000/api/chat \
-  -H 'Content-Type: application/json' \
-  -d '{"messages":[{"role":"user","content":"What sits atop the Main Building at Notre Dame?"}]}'
+npm run chroma:start         # ChromaDB on http://localhost:8000, data in .chroma/
 ```
 
-This accepts the existing `{ messages }` contract and returns the same enriched result as `/api/rag`. The final message must be a user message. Only the final user question is used for retrieval and answering; send self-contained questions. Prior assistant messages are never treated as evidence, and client-supplied system messages are rejected. The UI now displays the returned answer, highlights, faithfulness, and expandable verification details.
-
-### POST `/api/verify`
-
-Check an independently supplied answer without another retrieval/generation step:
+Terminal 2:
 
 ```bash
-curl http://127.0.0.1:3000/api/verify \
-  -H 'Content-Type: application/json' \
-  -d '{"question":"Where is Paris?","answer":"Paris is in France. Paris is in Germany. Paris has 99 million residents.","context":[{"id":"p1","text":"Paris is the capital of France and is located in France.","source":"local-example"}]}'
+npm run dev                  # http://127.0.0.1:3000
 ```
 
-Returns `{ question, answer, verification }`. Input context is an array of `{ id, text, source? }`, with unique IDs, at most 10 passages, 6,000 characters per passage, and 24,000 context characters total. Answers are limited to 16,000 characters.
+The first upload downloads Chroma's default embedding model (`Xenova/all-MiniLM-L6-v2`, about 90 MB) into `.cache/transformers/`. After that, embeddings are computed locally on the CPU. The same commands also work from the parent `ai prog` folder.
 
-Each returned factual claim also has `answerSpans: [{ start, end, text }]`. Positions are zero-based UTF-16 offsets with an exclusive end; `answer.slice(start, end)` equals `text`. Extraction returns original-answer quotes, which the server locates and validates locally instead of trusting model-generated offsets. Clients with older saved results lacking spans still show their claim/evidence list.
+## Using the dashboard
 
-### POST `/api/batch`
+- **A. Document Chatbot**: upload a PDF/DOCX, then ask questions. Each answer shows the excerpts it was generated from and a **Send to Checker** button.
+- **B. Hallucination Checker**: fills in automatically from "Send to Checker", or accepts pasted input. **Load example** fills in a case that produces all three verdicts. Tick **Healthcare Strictness Mode** for the 0.95 threshold. Results show the three scores and a claims table with verdict, confidence, evidence, reasoning, and any verdict adjustment.
+- **C. Batch Processing & Hugging Face**: import rows from a dataset ID (config, split, and columns are auto-detected; override them under the expandable options), or load a local JSON file (`examples/batch-input.json`). Then **Run batch check** and **Download CSV Audit Report**.
 
-Upload up to **50 items / 1 MiB** as a JSON file (an array or `{ "items": [...] }`) or JSONL (one item per line). The API also accepts `application/json` with `{ items, concurrency? }`. Use multipart field `file` for a file upload:
+## Architecture
 
-```bash
-curl http://127.0.0.1:3000/api/batch \
-  -F 'file=@examples/batch-input.json'
-```
-
-An item has this shape:
-
-```json
-{
-  "id": "example-1",
-  "question": "Where is Paris?",
-  "answer": "Paris is in France. Paris is in Germany. Paris has 100 airports.",
-  "context": [
-    { "id": "p1", "text": "Paris is located in France. Paris is not located in Germany.", "source": "Demo passage" }
-  ],
-  "topK": 5
-}
-```
-
-`question` is required. With an answer and context, the answer is checked directly. Omit context to retrieve from local Chroma. Omit answer to generate from the selected context and then verify. An explicit `context: []` is respected and never triggers retrieval. A missing answer with no passages yields an abstention. Each question/answer/context uses the manual API limits above.
-
-The response contains `schemaVersion`, `createdAt`, `durationMs`, `summary`, and ordered `results`. Every input row appears, including individual validation/model errors. Summary faithfulness is **total supported claims / total evaluated claims**, not an average of item percentages. Failed or cancelled rows have no score and are excluded from that denominator; their counts remain visible. Default concurrency is 1, with an allowed maximum of 2. File parsing/envelope errors reject the upload before model calls.
-
-Use `/api/batch?download=1` for an attached JSON response, or `/api/batch?format=csv` for an attached CSV report with one row per claim. JSON preserves the complete summary and context. CSV includes evidence and protects cells from spreadsheet formula execution. Each POST runs a new check; the UI's report-download button reuses the completed report without another Groq request.
-
-### Local batch-file command
-
-Keep Chroma running if your input needs retrieval, then run:
-
-```bash
-npm run check:batch -- examples/batch-input.json --output batch-report.json
-```
-
-For CSV:
-
-```bash
-npm run check:batch -- examples/batch-input.json --output batch-report.csv --format csv
-```
-
-Optional `--concurrency 2` enables two workers. The CLI uses `.env.local`, writes the report atomically, and exits nonzero if any rows fail or are cancelled while retaining their results in the report. The output parent folder must already exist. On interruption, started calls are cancelled and unstarted items are recorded as cancelled; network-disconnected browser clients may not receive that partial server report, so use the CLI when you need a saved partial report.
-
-## How verification works
-
-1. Groq extracts atomic, individually testable factual claims from the answer. Instructions treat the question, answer, and retrieved documents as untrusted data.
-2. A separate structured-output Groq call judges every extracted claim against only the supplied passages. A claim is `Supported` when the context entails it, `Contradicted` when the context directly refutes it, and `Unsupported` when the context is insufficient. Conflicting context is handled conservatively.
-3. Returned claim IDs and verdicts are validated. For Supported/Contradicted verdicts, evidence must cite a real passage ID and an exact substring of that passage. Invented quotes or references are downgraded to Unsupported. Unsupported claims can have an empty evidence array because absence of support has no supporting quote.
-4. `faithfulnessScore = 100 × supportedClaims / totalClaims`, rounded for display. All Unsupported and Contradicted claims remain in the denominator. No testable claims yields `null`. The pipeline fails if extraction/evaluation is incomplete; it does not return a successful unchecked answer.
-
-Confidence is a model-reported value between 0 and 1, not a calibrated probability. Quote validation proves that a quote exists; semantic entailment and claim extraction still rely on an LLM and can be wrong. This measures faithfulness to retrieved context, not real-world factual correctness. The original answer is returned with its verdicts; unsupported claims are not silently rewritten. A separate verifier model can reduce some shared-model bias but does not eliminate it.
-
-## Configuration and ingestion recovery
-
-For a tested AI documentation example and steps to add other IT datasets, see [IMPORT_DATA.md](IMPORT_DATA.md). It uses command-scoped dataset settings to keep the existing API key and collection unchanged.
-
-See `.env.example` for defaults:
-
-| Setting | Purpose |
+| Module | Files |
 | --- | --- |
-| `GROQ_API_KEY` | Required for answering and verification |
-| `GROQ_VERIFIER_MODEL` | Default `openai/gpt-oss-120b`; optionally `openai/gpt-oss-20b` |
-| `GROQ_TIMEOUT_MS` | Per-request Groq timeout, default 60000 ms |
-| `CHROMA_HOST`, `CHROMA_PORT` | Local loopback server, default `127.0.0.1:8000` |
-| `CHROMA_COLLECTION` | Collection name, default `rag_hf_minilm_v1` |
-| `HF_DATASET`, `HF_CONFIG`, `HF_SPLIT` | Default `rajpurkar/squad`, `plain_text`, `train` |
-| `HF_TEXT_FIELD`, `HF_TITLE_FIELD` | Default `context`, `title`; configure for your dataset schema |
-| `HF_MAX_ROWS`, `HF_START_OFFSET` | Bounded source row range, default 1000 rows from offset 0 |
-| `HF_BATCH_SIZE` | Embedding/upsert batch size, default 32 |
-| `HF_CHUNK_SIZE`, `HF_CHUNK_OVERLAP` | Character chunks and overlap, default 800 and 120; reduce size for text exceeding the 256-token embedding limit |
-| `HF_TOKEN` | Optional Hugging Face token for restricted datasets |
+| Groq client (groq-sdk): structured JSON, retries, error mapping | `lib/groq.ts` |
+| PDF (pdf-parse) / DOCX (mammoth) parsing, ingestion, retrieval | `lib/documents.ts`, `lib/chunking.ts` |
+| ChromaDB with Chroma's default embedding function | `lib/chroma.ts` |
+| Document chatbot | `lib/chatbot.ts`, `app/api/chat/route.ts`, `app/api/upload/route.ts` |
+| Verification engine | `lib/checker.ts`, `lib/evidence.ts`, `app/api/check/route.ts` |
+| Hugging Face importer | `lib/huggingface-importer.ts`, `app/api/import-hf/route.ts` |
+| Batch processing | `lib/batch.ts`, `app/api/batch-check/route.ts` |
+| CSV audit export (client-safe) | `lib/export.ts` |
+| Shared types, config, HTTP helpers | `lib/types.ts`, `lib/config.ts`, `lib/http.ts`, `lib/errors.ts` |
+| Raw HTML dashboard | `app/page.tsx`, `app/components/*` |
 
-Dataset fetching uses the Hugging Face dataset-viewer `/rows` API with pagination, so your dataset/config/split must be supported by that service. Truncated or missing text fails explicitly. Ingestion uses stable content IDs and upserts, making reruns safe for the same dataset contents and chunk settings. After a network interruption, rerun `npm run ingest:hf`; completed batches remain persisted. For a later row range, set `HF_START_OFFSET` and `HF_MAX_ROWS` in `.env.local`. Changing a source dataset does not delete previously stored documents: use a new collection name to isolate datasets or rebuild an index. Model/dimension settings are checked to prevent embedding mismatches.
+**Retrieval.** Uploaded text is split into sentence-aware chunks (about 1,000 characters with about 150 characters of overlap). The chunks are embedded with Chroma's `DefaultEmbeddingFunction` from `@chroma-core/default-embed` (all-MiniLM-L6-v2, cosine space) and stored in the `uploaded_documents` collection, tagged with a `documentId`, which is a hash of the extracted text, so re-uploading the same file replaces its chunks. Chat retrieves the top 5 chunks for the latest question and filters them to the active document.
 
-The installed MiniLM model and local cache must be retained for offline embedding. Groq generation/verification and uncached dataset/model downloads still require internet. `HANDOFF.md` records work status and validation so a later chat can resume after disconnection.
+**Verification (`lib/checker.ts`).**
+1. Groq extracts atomic, self-contained claims from the answer (at most 40, deduplicated).
+2. Groq judges every claim against the context and must return verdict, verbatim evidence, confidence (0 to 1), and reasoning. Claims it skips get one retry; if any are still missing, the check fails rather than scoring a subset.
+3. Groq scores answer relevance and context relevance (0 to 100) in a call that runs in parallel with steps 1 and 2.
 
-Transformers.js stays on the compatible 3.x embedding API. A scoped npm override selects patched `sharp` 0.35.5 or newer for its unused image dependency; the RAG pipeline handles text only. Keep this override when reinstalling dependencies.
+Evidence quotes are located in the context with an exact match first, then a whitespace/typography/case-insensitive match. The response always contains the exact source substring. A Supported or Contradicted verdict whose quote is not in the context is downgraded to Unsupported, and the reason is recorded in `adjustments`. The raw verdict is kept as `modelVerdict`.
 
-## Source files and checks
+**Faithfulness** is computed in code from the final verdicts as (Supported ÷ total claims) × 100, rather than by the LLM, because LLMs do arithmetic unreliably. It is `null` when the answer makes no factual claims.
 
-- `app/api/rag/route.ts`: RAG request route.
-- `app/api/chat/route.ts`: adapter for the existing UI.
-- `app/api/verify/route.ts`: answer-verification route.
-- `app/api/batch/route.ts`, `lib/rag/batch.ts`, `scripts/check-batch.ts`: batch uploads, bounded checking, JSON/CSV reporting, and CLI.
-- `app/components/`: manual/batch controls and shared verdict/evidence rendering, with cancellation.
-- `lib/rag/answer-spans.ts`: exact original-answer mapping and safe highlight segmentation.
-- `lib/rag/chroma.ts`, `embeddings.ts`: local vector database and shared embeddings.
-- `lib/rag/huggingface.ts`, `chunking.ts`, `scripts/ingest-hf.ts`: paginated fetching, chunking, CLI ingestion.
-- `lib/rag/groq.ts`, `verification.ts`, `pipeline.ts`: generation, claim checking, orchestration.
-- `requirements-chroma.txt`: local Python database dependency.
+**Healthcare Strictness Mode** adds clinical-rigor instructions to the verification prompt and downgrades any Supported claim with confidence below 0.95. Note that confidence is the model's self-report. In testing, `openai/gpt-oss-120b` often reports 0.97 to 0.99 even for paraphrased or approximated support ("roughly three times daily" for "every 8 hours"), so the threshold mainly catches claims the model itself is unsure about.
+
+## API
+
+All routes are `POST`. JSON routes need `Content-Type: application/json`. Errors return `{ "error": string, "code": string, "details"?: [{ path, message }] }` with a matching HTTP status (400 validation, 404 not found, 413 too large, 415 wrong type, 422 unreadable file, 429 Groq rate limit, 502 upstream failure, 503 Chroma down, 504 timeout).
+
+### `POST /api/upload`
+
+Multipart form with field `file` (PDF or DOCX, up to 20 MB).
+
+```bash
+curl -F "file=@paper.pdf" http://127.0.0.1:3000/api/upload
+```
+
+```json
+{ "documentId": "doc_fd2fbc30d1c74d33", "fileName": "paper.pdf", "fileType": "pdf", "pages": 1,
+  "characters": 904, "chunks": 1, "collection": "uploaded_documents", "preview": "Effects of Afternoon Napping…" }
+```
+
+Handled failures: wrong extension or magic bytes (415/422), password-protected PDF (`PDF_PASSWORD_PROTECTED`), damaged files (`PDF_UNREADABLE`, `DOCX_UNREADABLE`), scanned PDFs with no text layer (`NO_EXTRACTABLE_TEXT`), and Chroma not running (`CHROMA_UNAVAILABLE`).
+
+### `POST /api/chat`
+
+```json
+{ "documentId": "doc_fd2fbc30d1c74d33",
+  "messages": [{ "role": "user", "content": "How much better did the nap group do?" }],
+  "topK": 5 }
+```
+
+Returns `{ question, answer, documentId, fileName, context: [{ id, chunkIndex, text, distance }], contextText, model, durationMs }`. `contextText` is what "Send to Checker" passes on as the context. Up to 8 earlier turns are sent for continuity, but only the retrieved excerpts count as evidence. If the excerpts don't contain the answer, the reply is "The uploaded document does not contain information to answer this question."
+
+### `POST /api/check`
+
+```json
+{ "question": "What did the study find about hospital readmissions?",
+  "context": "…23% fewer hospital readmissions than the control group…",
+  "answer": "The intervention reduced hospital readmissions by 32%.",
+  "strictnessMode": false }
+```
+
+`context` can also be an array of passages. Limits: question 4,000 characters, answer 20,000, context 60,000. Response (abridged):
+
+```json
+{ "claims": [{ "id": "c1", "claim": "The intervention reduced hospital readmissions by 32%.",
+               "verdict": "Contradicted", "modelVerdict": "Contradicted",
+               "evidence": "Participants who received the intervention had 23% fewer hospital readmissions than the control group.",
+               "evidenceFound": true, "confidence": 0.99, "reasoning": "…", "adjustments": [] }],
+  "counts": { "total": 1, "supported": 0, "contradicted": 1, "unsupported": 0 },
+  "metrics": { "faithfulness": 0, "answerRelevance": 80, "contextRelevance": 100,
+               "answerRelevanceReason": "…", "contextRelevanceReason": "…" },
+  "strictnessMode": false, "supportThreshold": null, "model": "openai/gpt-oss-120b", "durationMs": 2052 }
+```
+
+### `POST /api/batch-check`
+
+Send `{ "items": [{ "id"?, "question", "answer", "context" }], "strictnessMode"?, "concurrency"? }` or a bare array of items. Up to 50 items; concurrency is 1 to 5 (default 2). Items run concurrently through the checker. An invalid or failed item is reported in its own result and never fails the batch.
+
+```bash
+curl -H 'Content-Type: application/json' --data @examples/batch-input.json http://127.0.0.1:3000/api/batch-check
+```
+
+The response is `{ createdAt, durationMs, strictnessMode, concurrency, model, summary, results }`. `summary` includes `overallFaithfulness` (all supported claims ÷ all claims), `averageFaithfulness` (the mean of per-item scores), the average relevance scores, claim counts, and `itemsWithFailedClaims`. Each result has `status: "ok"` with a full `result`, or `status: "error"` with `{ code, message }`.
+
+`lib/export.ts` turns this report into the CSV audit report: `batchReportToCsv(report)` writes the columns ID, Question, Answer, Faithfulness (%), Answer Relevance, Context Relevance, Failed Claims (Contradicted/Unsupported claims, one per line), and Status. Cells are RFC 4180-quoted and guarded against spreadsheet formula injection. The dashboard's download adds a UTF-8 BOM so Excel detects the encoding.
+
+### `POST /api/import-hf`
+
+```json
+{ "dataset": "pminervini/HaluEval", "config": "qa_samples", "split": "data", "offset": 0, "limit": 10,
+  "questionField": "question", "answerField": "answer", "contextField": "knowledge", "embed": true }
+```
+
+Only `dataset` is required. If you omit the config, the first one is used. If you omit the split, test is preferred, then validation, then train. Columns are detected from common names (question/query/prompt, answer/response/answers/right_answer, context/knowledge/documents/passages). Field paths such as `answers.text.0` are supported, and list or object values are flattened to text. `limit` is 1 to 50 rows per request. Rows truncated by the Hugging Face viewer, or missing any field, are listed in `skipped`. Unique contexts are chunked and embedded into the `hf_test_contexts` collection with the default embedding function. If Chroma is down, the items are still returned with `embedding.status: "failed"`. The returned `items` can be posted to `/api/batch-check` unchanged.
+
+Tested datasets: `rajpurkar/squad` (gold answers, so all claims should be Supported) and `pminervini/HaluEval` with config `qa_samples` (a mix of correct and hallucinated answers). Gated datasets need `HF_TOKEN`.
+
+## Configuration (`.env.local`)
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `GROQ_API_KEY` | (required) | Groq key, server-only |
+| `GROQ_CHAT_MODEL`, `GROQ_CHECKER_MODEL` | `openai/gpt-oss-120b` | Models for answering and checking (`GROQ_MODEL` sets both) |
+| `GROQ_REASONING_EFFORT` | `low` | gpt-oss reasoning effort: low, medium, or high |
+| `GROQ_TIMEOUT_MS` | `60000` | Per-attempt request timeout |
+| `GROQ_MAX_RETRIES` | `2` | Retries for timeouts, network errors, and 5xx |
+| `GROQ_RATE_LIMIT_WAIT_MS` | `90000` | How long one request may wait out 429 rate limits |
+| `CHROMA_HOST`, `CHROMA_PORT` | `localhost`, `8000` | Local Chroma server |
+| `CHROMA_DOCUMENTS_COLLECTION` | `uploaded_documents` | Uploaded document chunks |
+| `CHROMA_HF_COLLECTION` | `hf_test_contexts` | Imported Hugging Face contexts |
+| `HF_TOKEN` | (empty) | Token for gated or private datasets |
+
+**Models.** Groq retired `llama-3.1-70b-versatile` (and Llama 3.3 70B is also no longer offered to this key), so the default is `openai/gpt-oss-120b`, which gets Groq's strict JSON-schema decoding. Other models fall back to JSON mode, with the schema in the prompt plus zod validation.
+
+**Rate limits.** Free-tier Groq keys allow roughly 8,000 tokens per minute and 1,000 requests per day for gpt-oss-120b, and one check uses about 3 requests. On a 429, requests back off and retry (honouring `retry-after`) for up to `GROQ_RATE_LIMIT_WAIT_MS`. Large batches on a free key therefore take minutes. Lower the concurrency if items fail with `GROQ_RATE_LIMITED`. A single prompt larger than the per-minute budget fails with `GROQ_REQUEST_TOO_LARGE`, so shorten the context.
+
+## Tests
 
 ```bash
 npm run typecheck
 npm test
+npm run build
 ```
 
-All 70 unit tests use deterministic fixtures and mocked network calls. They do not consume Groq credits. See `HANDOFF.md` for live API, CLI, and browser smoke test results.
+There are 42 unit tests: checker logic and Healthcare Mode, evidence matching, CSV export, batch concurrency and summaries, the Hugging Face importer, real PDF/DOCX parsing, chunking, and the Groq client against a local mock server (timeouts, 429/5xx retries, error mapping). They use injected fakes or local servers and never call Groq or Hugging Face.
 
-Official API references: [Chroma local client/server](https://docs.trychroma.com/docs/run-chroma/client-server), [Groq structured outputs](https://console.groq.com/docs/structured-outputs), [Hugging Face dataset rows](https://huggingface.co/docs/dataset-viewer/en/rows), and [SQuAD dataset card and license](https://huggingface.co/datasets/rajpurkar/squad).
+## Notes
+
+- `chromadb` is loaded at runtime with `import(/* webpackIgnore: true */ "chromadb")`, because it dynamically imports `@chroma-core/*` packages, which Turbopack cannot bundle. pdf-parse, pdfjs-dist, and the embedding packages are listed in `serverExternalPackages`.
+- The previous Chroma collection `rag_hf_minilm_v1` (SQuAD plus Transformers docs from the old app) is still in `.chroma/` but is no longer used.
+- Faithfulness measures support in the provided context, not real-world truth. Verdicts and confidence come from an LLM and can be wrong; quote validation only proves that the cited text exists.

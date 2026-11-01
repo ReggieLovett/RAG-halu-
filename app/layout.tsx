@@ -1,14 +1,13 @@
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Halu — AI workspace",
-  description: "A focused AI chat workspace powered by Groq."
+  title: "AI Chatbot & RAG Hallucination Checker",
+  description: "Document Q&A chatbot with claim-level hallucination checking, batch audits, and Hugging Face dataset import.",
 };
 
-export default function RootLayout({
-  children
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html lang="en">
       <body>{children}</body>
